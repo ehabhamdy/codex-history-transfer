@@ -23,7 +23,7 @@ import uuid
 import zipfile
 
 VERSION = 1
-TOOL_VERSION = '1.1.0'
+TOOL_VERSION = '1.1.1'
 STATE = 'state_5.sqlite'
 HISTORY = 'thread_history_1.sqlite'
 STATE_TABLES = ['threads', 'thread_dynamic_tools', 'thread_attachments', 'thread_spawn_edges']
@@ -102,6 +102,18 @@ def mapped_rollout(data, payload, project):
             boundaries.append(old_position)
             deltas.append(output.tell() - old_position)
     return output.getvalue(), (boundaries, deltas)
+
+def mapped_thread_row(original, payload, home, project, project_id):
+    row = dict(original)
+    row['cwd'] = mapped_cwd(row['cwd'], payload['source_project'], project)
+    relative = next(name for name, info in payload['files'].items() if info['thread_id'] == row['id'])
+    row['rollout_path'] = str(home.joinpath(*PurePosixPath(relative).parts))
+    row['project_id'] = project_id
+    row['is_pinned'] = 0
+    row['thread_section_id'] = None
+    row['section_position'] = None
+    row['section_entered_at_ms'] = None
+    return row
 
 def mapped_history_row(original, offsets):
     row = dict(original)
@@ -291,14 +303,7 @@ def prepare_merge(home, project, payload, archive, stage):
             for original in data:
                 row = dict(original)
                 if table == 'threads':
-                    row['cwd'] = mapped_cwd(row['cwd'], payload['source_project'], project)
-                    relative = next(name for name, info in payload['files'].items() if info['thread_id'] == row['id'])
-                    row['rollout_path'] = str(home.joinpath(*PurePosixPath(relative).parts))
-                    row['project_id'] = project_id
-                    row['is_pinned'] = 0
-                    row['thread_section_id'] = None
-                    row['section_position'] = None
-                    row['section_entered_at_ms'] = None
+                    row = mapped_thread_row(original, payload, home, project, project_id)
                 elif table == 'thread_attachments':
                     require(row['attachment_type'] == 'pull_request',
                             'This project has local worktree/file attachments that need a separate migration. Aborting.')
@@ -416,6 +421,14 @@ def verify_import(home, bundle, project=None):
     ids = set(payload['thread_ids'])
     for dbname, tables in payload['tables'].items():
         with closing(ro(home / dbname)) as con:
+            if dbname == STATE:
+                # Resolve the expected project independently of imported thread values.
+                target_projects = {r['project_id'] for r in rows(con, 'project_roots')
+                                   if norm(r['path']) == norm(project)}
+                require(len(target_projects) == 1, 'Missing or ambiguous destination project mapping.')
+                project_id = next(iter(target_projects))
+                require(con.execute('SELECT 1 FROM projects WHERE id=?', (project_id,)).fetchone(),
+                        'Destination project not found.')
             for table, expected in tables.items():
                 if table == 'thread_spawn_edges':
                     actual = [r for r in rows(con, table) if r['child_thread_id'] in ids]
@@ -425,9 +438,13 @@ def verify_import(home, bundle, project=None):
                     actual = [dict(r) for r in con.execute(f'SELECT * FROM "{table}" WHERE "{key}" IN ({marks})', sorted(ids))]
                 require(len(actual) == len(expected), f'Row count mismatch: {dbname}/{table}')
                 if dbname == HISTORY:
-                    require(sorted(json.dumps(r, sort_keys=True) for r in actual) == sorted(json.dumps(mapped_history_row(r, offsets), sort_keys=True) for r in expected),
-                            f'History content mismatch: {table}')
-    print(f'Verified: {len(ids)} chats, mapped metadata/offsets, and unchanged historical event content.')
+                    expected = [mapped_history_row(row, offsets) for row in expected]
+                elif table == 'threads':
+                    expected = [mapped_thread_row(row, payload, home, project, project_id) for row in expected]
+                label = 'History' if dbname == HISTORY else 'State'
+                require(sorted(json.dumps(r, sort_keys=True) for r in actual) == sorted(json.dumps(r, sort_keys=True) for r in expected),
+                        f'{label} content mismatch: {table}')
+    print(f'Verified: {len(ids)} chats, mapped session files, and full state/history row content.')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)

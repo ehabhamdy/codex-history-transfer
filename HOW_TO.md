@@ -1,180 +1,195 @@
 # Move local Codex chats from Mac to Windows
 
-## Update 1.1.0: Windows staging error
+[Project overview](README.md) · [Validation and limits](VALIDATION.md)
 
-If version 1.0 stopped with WinError 267 on thread_history_1.sqlite inside a
-codex-transfer-stage-* folder, replace transfer.py with this version. Keep
-using your existing ehapps-history.zip; no new export is needed.
-
-In the folder containing both files, verify the new version:
-
-```powershell
-python transfer.py --version
-```
-
-Expected: codex-history-transfer 1.1.0
-
-Quit ChatGPT/Codex and retry:
-
-```powershell
-python transfer.py --debug import --bundle ".\ehapps-history.zip" --project "C:\Users\Ehab\Code\ehapps-website" --apply
-```
-
-The original script could leave SQLite connections open on exception, allowing
-Windows temporary-directory cleanup to obscure the original error. This update
-closes connections on all paths and preserves original errors. It also compares
-foreign-key validation against the pre-import baseline so existing application
-references do not falsely count as new import defects. Existing rows remain
-unchanged; newly introduced defects are rejected.
-
-If it still fails, retain the complete output/traceback. A failure before the
-"Pre-import backup" message occurs before installing the merged history. Do not
-replace the Windows .codex directory or re-export merely to address this error.
-
-This is an unofficial, version-checked, offline merge utility, not an OpenAI
-import feature. It was tested with copies of this Mac's actual 10 project chats
-and Codex 0.169.0. It has not been run on your Windows computer or verified in
-the Windows graphical app. Keep both computers' original data until the final
-Windows checks succeed.
-
-## Why Git did not copy the chats
-
-The repository and local Codex history are separate. This Mac's history lives
-in /Users/I575965/.codex. Native Windows uses %USERPROFILE%\.codex unless
-CODEX_HOME overrides it. WSL has a separate home; these instructions target
-the native Windows app.
+This guide transfers one local project's history to native Windows. Git does
+not copy local Codex chats; WSL also has a separate home directory. Check the
+[requirements](README.md#requirements) before starting.
 
 ## 1. Prepare both computers
 
-Use the same ChatGPT account and workspace. Update the desktop apps to matching
-versions if possible. The utility refuses incompatible database schemas.
-On Windows, open/add the existing local repository as a project once, then quit.
-Python 3.9+ is required on both computers. The Mac already has Python and zstd.
-If Windows has no Python, install Python 3 from python.org, then verify:
+Use the same account and workspace, with matching app versions where possible.
+Copy or clone the repository to Windows, open/add it as a local project in the
+app once, and quit. Verify Python with `python3 --version` on macOS and
+`py -3 --version` in Windows PowerShell.
+
+Commands below run from the folder containing `transfer.py`. Replace the
+example checkout paths and bundle name with your own values.
+
+History defaults to `$HOME/.codex` on macOS and `%USERPROFILE%\.codex` on
+Windows. `CODEX_HOME` overrides the default; the global `--codex-home PATH`
+option overrides both. Put global options **before** the command:
 
 ```powershell
-py -3 --version
+py -3 transfer.py --codex-home "D:\CodexData" import --bundle ".\my-project-history.zip" --project "D:\Code\my-project"
 ```
+
+Use the same data location for preview, apply, and verification.
 
 ## 2. Export on the Mac
 
-Finish this conversation first. Quit ChatGPT/Codex completely, including CLI
-sessions and background agents. Run these commands in macOS Terminal:
+Finish conversations you want included. Quit ChatGPT/Codex completely,
+including CLI sessions and background agents, then run:
 
 ```bash
-cd "$HOME/Documents/Code/Projects/codex-history-transfer"
-python3 transfer.py export --project "/Users/I575965/Documents/Code/Projects/ehapps-website" --out "ehapps-history.zip"
+python3 transfer.py export --project "$HOME/Code/my-project" --out "$HOME/Downloads/my-project-history.zip"
 ```
 
-The export reports the number of chats. It includes active and archived chats
-associated with this project/root, their stored turn/item history, and their
-session payloads. Older compressed sessions are decompressed into the bundle.
-The original history is never edited. No exported bundle is provided in this
-kit because this conversation must finish before it can be fully exported.
+The export includes active and archived project chats, stored turn/item
+history, and session payloads. Compressed sessions are decompressed into the
+bundle. The original history is not edited, and an existing output ZIP is
+never overwritten. The command reports the number of exported chats.
 
-## 3. Transfer the folder privately
+Copy `transfer.py` and the ZIP to a Windows folder such as
+`Downloads\codex-history-transfer` using a private transfer method. The ZIP
+contains conversations and tool output; do not commit or publish it.
 
-Copy the whole codex-history-transfer folder, including transfer.py and your
-new ehapps-history.zip, to your Windows Downloads folder using USB or another
-private transfer method. The ZIP contains your conversations and tool output.
-Do not commit it to the website repository or publish it.
+## 3. Preview on Windows
 
-## 4. Preview on Windows
-
-Open a normal PowerShell window. Change the example repository path below to
-the actual Windows checkout path. The first command previews only:
+Open PowerShell and run:
 
 ```powershell
 cd "$env:USERPROFILE\Downloads\codex-history-transfer"
-py -3 transfer.py import --bundle ".\ehapps-history.zip" --project "C:\Users\Ehab\Code\ehapps-website"
+py -3 transfer.py import --bundle ".\my-project-history.zip" --project "$env:USERPROFILE\Code\my-project"
 ```
 
-Expected: "Plan: add 10 chats; preserve N existing chats" (counts can differ if
-you create more chats before export). An existing ID causes a stop, never an
-overwrite. A schema mismatch also causes a stop. Do not bypass either check.
+Expect `Plan: add N chats; preserve M existing chats`, the project mapping,
+and `Preview only; no files changed`. Check the paths and counts.
 
-## 5. Apply the merge
+Preview validates bundle checksums, selected table schemas, duplicate chat
+IDs, and the destination folder. It does not stage the merge; attachment,
+project-mapping, and database-integrity checks also run with `--apply`.
+Existing chat IDs or incompatible schemas stop the import rather than
+allowing history to be overwritten.
 
-Quit ChatGPT/Codex fully on Windows. The script also checks running processes.
-Then run the same command with --apply:
+## 4. Apply the merge
+
+Quit ChatGPT/Codex and all CLI/background agents on Windows. The script also
+checks for running processes. Repeat the command with `--apply`:
 
 ```powershell
-py -3 transfer.py import --bundle ".\ehapps-history.zip" --project "C:\Users\Ehab\Code\ehapps-website" --apply
+py -3 transfer.py import --bundle ".\my-project-history.zip" --project "$env:USERPROFILE\Code\my-project" --apply
 ```
 
-It builds the merge on copies, checks that all existing database rows remain
-unchanged, creates a backup beside .codex, and then installs the merged data.
-It preserves existing Windows chats, projects, auth, and configuration. It
-maps the imported chats to the Windows project, rewrites saved location
-metadata, and adjusts paginated transcript byte offsets. Historical messages
-and command outputs retain their original text, including original Mac paths.
-Imported sidebar pins/custom sections are not copied.
+The script stages the merge, checks database integrity and newly introduced
+foreign-key defects, and checks that existing database rows remain unchanged.
+It creates a `codex-history-backup-...` directory beside the destination data
+directory before installing the merge. Retain the printed backup path.
 
-The final "Verified" message checks every exported history row and mapped
-session file. Do not run the same import twice; duplicate IDs are refused.
+Imported chats are associated with the Windows project. Structured location
+metadata and transcript byte offsets are remapped; historical messages and
+command outputs retain their original text. Existing chats, project settings,
+authentication, and configuration are preserved. Imported sidebar pins and
+custom sections are not copied.
 
-## 6. Check before resuming work
+Post-install verification compares mapped session files and history rows with
+the bundle and compares every imported state-table row with its expected
+values, including remapped paths, destination project IDs, and reset sidebar
+fields. See [verification coverage](VALIDATION.md#verification-coverage).
+Do not import the same bundle twice; duplicate IDs are refused.
 
-Reopen the app and inspect the project's chats. Check an old conversation and
-the newest one, and check that your existing Windows chats are still present.
-For an imported conversation, first ask it to report the current working
-directory without changing files; it must point to your Windows checkout.
-Choose the permissions appropriate for Windows before continuing real work.
+## 5. Verify and resume
 
-If a chat is not grouped in the sidebar, search for its title or open it with
-the CLI fallback printed by the import. Do not repeatedly reimport.
-
-If Codex CLI is installed, the fallback is:
+For another strict check, run this while the app is still closed, before
+continuing imported chats:
 
 ```powershell
-codex resume CHAT_ID --cd "C:\Users\Ehab\Code\ehapps-website"
+py -3 transfer.py verify --bundle ".\my-project-history.zip"
 ```
 
-Optional strict file verification (before continuing chats, since continuation
-changes their files):
+Continuing chats or changing their titles, pins, sections, or project
+assignments changes the verified snapshot, so a later mismatch does not by
+itself mean the transfer failed.
+
+Reopen the app. Inspect an old imported conversation and the newest one, and
+confirm that existing Windows chats remain present. Before real work, ask an
+imported chat to report its current working directory without changing files;
+it should point to the Windows checkout or its corresponding subdirectory.
+Choose permissions appropriate for Windows.
+
+If a chat is not grouped in the sidebar, search for its title. If Codex CLI
+is installed, use the fallback printed by the import, replacing `CHAT_ID`:
 
 ```powershell
-py -3 transfer.py verify --bundle ".\ehapps-history.zip"
+codex resume CHAT_ID --cd "$env:USERPROFILE\Code\my-project"
 ```
 
-## 7. Other projects
+Keep the original stores, bundle, and backup until these checks succeed.
 
-Repeat steps 2-6 with another Mac --project path, a distinct output ZIP name,
-and the matching Windows --project path. Imports are additive. Keep the ZIPs
-outside the repositories. This is a one-time migration, not two-way chat sync.
-If a project has chats in separate worktrees, multiple roots, or cross-project
-fork/agent dependencies, the tool can refuse it: those cases need an explicit
-mapping and should not be forced through this single-root utility.
+## Other projects and unsupported cases
 
-## Limits
+Repeat with another source project, a distinct ZIP, and the matching Windows
+checkout. Imports are additive; this is not two-way synchronization. Do not
+synchronize a live `.codex` directory between computers.
 
-- The Windows graphical app has not been tested here. Final Windows inspection
-  is required; the code cannot guarantee compatibility with future app builds.
-- Repositories, uncommitted work, worktrees, plugins, skills, credentials,
-  automations, model memory, and arbitrary external attachment/output files
-  are not transferred. Embedded transcript data is retained; links to media
-  or files that existed only on the Mac may need those files copied separately.
-- Authentication and machine-specific configuration stay on each computer.
-- Do not put the live .codex directory in a bidirectional sync folder.
-- If an import stops, retain its error and both original stores; do not delete
-  databases or history folders to force discovery.
+Separate worktrees, multiple roots, and cross-project fork/agent dependencies
+need mapping beyond this utility's scope. Local worktree/file attachment
+records are also rejected. Do not bypass these checks. External attachments,
+media, and output files must be copied separately where needed; see the
+[scope and limits](README.md#scope-and-limits).
 
-## Rollback if Windows validation fails
+## Troubleshooting
 
-Do this before starting new work after the import; restoring a snapshot also
-removes changes made since that snapshot. Quit ChatGPT/Codex and all agents.
-The script prints a codex-history-backup-... directory beside .codex. Its
-restore.json identifies the destination home, four backed-up state files, and
-the newly added session files. Preserve a second copy of the current .codex
-before recovery. Restore the backed-up state_5.sqlite, thread_history_1.sqlite,
-.codex-global-state.json and session_index.jsonl to their recorded location;
-for originally_missing files, remove the newly created counterpart. With all
-processes stopped, remove stale -wal/-shm sidecars for those two databases and
-remove only the added_files listed in restore.json. Reopen the app. Keep the
-backup until you have verified your original Windows chats.
+- **Running process:** stop the named app/agent and retry.
+- **Missing database:** check the data directory and open the destination
+  project in the app once.
+- **Compressed session needs `zstd`:** make `zstd` available on the exporting
+  Mac, or use Python 3.14+ with `compression.zstd`.
+- **Incompatible schema:** match app versions; do not bypass the check.
+- **Duplicate chat ID:** inspect the existing chat; reimport is unsupported.
+- **Other failure:** retain the full output, both original stores, and any
+  backup path. Put `--debug` before the command for a traceback:
 
-## Official references
+```powershell
+py -3 transfer.py --debug import --bundle ".\my-project-history.zip" --project "$env:USERPROFILE\Code\my-project" --apply
+```
 
-- [ChatGPT desktop app for Windows](https://learn.chatgpt.com/docs/windows/windows-app)
-- [Projects and chats](https://learn.chatgpt.com/docs/projects)
-- [Codex app server](https://learn.chatgpt.com/docs/app-server)
+A failure before `Pre-import backup` occurs before merged history is installed.
+For later failures, the script attempts to restore the previous state when
+installation or verification raises an exception. Keep the backup; do not
+remove databases or history folders to force discovery.
+
+### Version 1.0 Windows staging error
+
+If an older script stopped with `WinError 267` on `thread_history_1.sqlite`
+inside a `codex-transfer-stage-*` directory, replace it with the current script.
+Check with `py -3 transfer.py --version`; expect
+`codex-history-transfer 1.1.1` for the current release. The existing bundle can
+be reused because the bundle format is unchanged.
+
+Version 1.1.0 closes SQLite handles on error, prevents cleanup failures from
+masking the original exception, and rejects new foreign-key defects while
+tolerating unchanged preexisting defects. Retry with `--debug` if needed.
+
+### Version 1.1.1 verification update
+
+Earlier versions checked imported state-table row counts without comparing
+their values. Version 1.1.1 also compares the full rows, so an incorrect stored
+session path now raises `State content mismatch: threads`. A mismatch during
+installation triggers the existing rollback procedure. The standalone
+`verify` command only reports the mismatch; it does not repair history.
+
+Existing format-1 bundles work with this version. For an untouched import,
+quit the app and rerun `verify` using the updated script; do not reimport the
+bundle. For chats already continued or reorganized, snapshot mismatches can
+be expected as described above.
+
+## Manual rollback
+
+Restore before starting new work if possible: a snapshot restore also removes
+changes made after it. There is no rollback CLI command.
+
+1. Quit ChatGPT/Codex and all agents. Preserve a second copy of the current
+   destination data directory before recovery.
+2. Open `restore.json` in the printed backup directory. It records the
+   destination `home`, four `core` files, `originally_missing` files, and
+   newly `added_files`.
+3. Restore `state_5.sqlite`, `thread_history_1.sqlite`,
+   `.codex-global-state.json`, and `session_index.jsonl` from the backup to
+   the recorded destination. For any file in `originally_missing`, remove
+   its newly created counterpart instead.
+4. With processes still stopped, remove stale `-wal` and `-shm` sidecars for
+   those two databases. Remove only session files listed in `added_files`,
+   resolving paths relative to the recorded `home`.
+5. Reopen the app and check the original Windows chats. Keep the backup until
+   recovery is verified.

@@ -1,4 +1,5 @@
 """Regression tests use synthetic chats and model Windows locked-file cleanup."""
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 import importlib.util
@@ -156,6 +157,100 @@ class TransferTests(unittest.TestCase):
             self.assertEqual([('existing',)], con.execute('SELECT id FROM threads').fetchall())
         finally:
             con.close()
+
+    def test_verify_rejects_incorrect_rollout_path(self):
+        transfer.apply_import(self.target, self.project, self.bundle, check_closed=False)
+        transfer.verify_import(self.target, self.bundle)
+        with closing(sqlite3.connect(self.target / transfer.STATE)) as con:
+            con.execute("UPDATE threads SET rollout_path='missing-session.jsonl' WHERE id='incoming'")
+            con.commit()
+        with mock.patch.object(transfer.sqlite3, 'connect', self.tracker.open):
+            with self.assertRaisesRegex(RuntimeError, 'State content mismatch: threads'):
+                transfer.verify_import(self.target, self.bundle)
+        self.assertFalse(self.tracker.live, 'SQLite handles survived failed state verification')
+
+    def test_verify_compares_all_state_tables_after_remapping(self):
+        # Include a child chat in a subdirectory and source-only sidebar state.
+        child_cwd = self.source_project / 'src'
+        child_rollout = self.source / 'sessions' / 'rollout-child.jsonl'
+        child_rollout.write_text(json.dumps({'type': 'session_meta', 'payload': {
+            'id': 'child', 'cwd': str(child_cwd), 'forked_from_id': 'incoming',
+        }}) + '\n', encoding='utf-8')
+        with closing(sqlite3.connect(self.source / transfer.STATE)) as con:
+            con.execute("INSERT INTO projects VALUES ('source-project', 'Source', '{}', 0, 0, 0)")
+            con.execute("INSERT INTO project_roots VALUES ('source-project', 0, ?)", (str(self.source_project),))
+            con.execute("INSERT INTO thread_sections VALUES ('source-section')")
+            con.execute("UPDATE threads SET project_id='source-project', is_pinned=1, "
+                        "thread_section_id='source-section', section_position=3, section_entered_at_ms=42")
+            con.execute("INSERT INTO threads VALUES ('child', ?, ?, 'Child chat', 1000, "
+                        "'source-project', 1, 'source-section', 4, 43, 'incoming')",
+                        (str(child_cwd), str(child_rollout)))
+            con.execute("INSERT INTO thread_dynamic_tools VALUES ('incoming', 0)")
+            con.execute("INSERT INTO thread_attachments VALUES ('attachment', 'incoming', 'pull_request')")
+            con.execute("INSERT INTO thread_spawn_edges VALUES ('incoming', 'child')")
+            con.commit()
+        bundle = self.base / 'state-history.zip'
+        transfer.make_export(self.source, self.source_project, bundle)
+        # Reuse a destination project rather than requiring a newly generated ID.
+        with closing(sqlite3.connect(self.target / transfer.STATE)) as con:
+            con.execute("INSERT INTO projects VALUES ('destination-project', 'Destination', '{}', 0, 0, 0)")
+            con.execute("INSERT INTO project_roots VALUES ('destination-project', 0, ?)", (str(self.project),))
+            con.commit()
+        transfer.apply_import(self.target, self.project, bundle, check_closed=False)
+        transfer.verify_import(self.target, bundle)
+
+        mutations = [
+            ('threads', 'cwd', str(self.source_project)),
+            ('threads', 'project_id', 'source-project'),
+            ('threads', 'title', 'Changed title'),
+            ('threads', 'is_pinned', 1),
+            ('threads', 'thread_section_id', 'source-section'),
+            ('threads', 'section_position', 3),
+            ('threads', 'section_entered_at_ms', 42),
+            ('threads', 'attached_thread_parent_id', 'child'),
+            ('thread_dynamic_tools', 'position', 99),
+            ('thread_attachments', 'attachment_type', 'file'),
+            ('thread_spawn_edges', 'parent_thread_id', 'child'),
+        ]
+        for table, column, value in mutations:
+            with self.subTest(table=table, column=column):
+                where = " WHERE id='incoming'" if table == 'threads' else ''
+                with closing(sqlite3.connect(self.target / transfer.STATE)) as con:
+                    original = con.execute(f'SELECT "{column}" FROM "{table}"' + where).fetchone()[0]
+                    con.execute(f'UPDATE "{table}" SET "{column}"=?' + where, (value,))
+                    con.commit()
+                try:
+                    with self.assertRaisesRegex(RuntimeError, 'State content mismatch: ' + table):
+                        transfer.verify_import(self.target, bundle)
+                finally:
+                    with closing(sqlite3.connect(self.target / transfer.STATE)) as con:
+                        con.execute(f'UPDATE "{table}" SET "{column}"=?' + where, (original,))
+                        con.commit()
+
+    def test_failed_state_verification_rolls_back(self):
+        original_prepare = transfer.prepare_merge
+        def database_contents():
+            # SQLite backup may change file headers while preserving all schema/data.
+            contents = {}
+            for name in (transfer.STATE, transfer.HISTORY):
+                with closing(sqlite3.connect(self.target / name)) as con:
+                    contents[name] = list(con.iterdump())
+            return contents
+        before = database_contents()
+        def corrupt_staged_state(*args):
+            original_prepare(*args)
+            with closing(sqlite3.connect(args[-1] / transfer.STATE)) as con:
+                con.execute("UPDATE threads SET rollout_path='missing-session.jsonl' WHERE id='incoming'")
+                con.commit()
+        with mock.patch.object(transfer.sqlite3, 'connect', self.tracker.open), \
+             mock.patch.object(transfer, 'prepare_merge', corrupt_staged_state):
+            with self.assertRaisesRegex(RuntimeError, 'State content mismatch: threads'):
+                transfer.apply_import(self.target, self.project, self.bundle, check_closed=False)
+        self.assertFalse(self.tracker.live)
+        self.assertEqual(before, database_contents())
+        self.assertFalse((self.target / 'sessions' / 'rollout-incoming.jsonl').exists())
+        self.assertFalse((self.target / '.codex-global-state.json').exists())
+        self.assertFalse((self.target / 'session_index.jsonl').exists())
 
     def test_failed_verification_rolls_back_and_closes_database_handles(self):
         original_prepare = transfer.prepare_merge
