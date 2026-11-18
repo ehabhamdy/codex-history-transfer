@@ -5,9 +5,12 @@ from unittest import mock
 import importlib.util
 import io
 import json
+import shutil
 import sqlite3
+import subprocess
 import tempfile
 import unittest
+import zipfile
 
 spec = importlib.util.spec_from_file_location('transfer', Path(__file__).with_name('transfer.py'))
 transfer = importlib.util.module_from_spec(spec)
@@ -92,6 +95,42 @@ class TransferTests(unittest.TestCase):
     def tearDown(self):
         self.tracker.close_all()
         self.temp.cleanup()
+
+    def test_export_import_compressed_rollouts(self):
+        relative = 'sessions/rollout-incoming.jsonl'
+        rollout = self.source / relative
+        original = rollout.read_bytes()
+        compressed = Path(str(rollout) + '.zst')
+        try:
+            from compression import zstd
+        except ImportError:
+            if not shutil.which('zstd'):
+                self.skipTest('Compressed export requires zstd or Python with compression.zstd')
+            compressed.write_bytes(subprocess.run(['zstd', '-q', '-c', str(rollout)],
+                                                  capture_output=True, check=True).stdout)
+        else:
+            compressed.write_bytes(zstd.compress(original))
+        rollout.unlink()
+
+        for recorded in (rollout, compressed):
+            with self.subTest(recorded_suffix=recorded.suffix):
+                with closing(sqlite3.connect(self.source / transfer.STATE)) as con:
+                    con.execute('UPDATE threads SET rollout_path=? WHERE id=?', (str(recorded), 'incoming'))
+                    con.commit()
+                bundle = self.base / (recorded.name + '.zip')
+                transfer.make_export(self.source, self.source_project, bundle)
+                with zipfile.ZipFile(bundle) as archive:
+                    manifest = transfer.validate_bundle(archive)
+                    self.assertEqual(set(manifest['files']), {relative})
+                    self.assertEqual(archive.read(relative), original)
+                target = self.base / (recorded.name + '-home')
+                project = self.base / (recorded.name + '-project')
+                create_store(target, project, 'existing')
+                transfer.apply_import(target, project, bundle, check_closed=False)
+                with closing(sqlite3.connect(target / transfer.STATE)) as con:
+                    stored_path, = con.execute("SELECT rollout_path FROM threads WHERE id='incoming'").fetchone()
+                self.assertEqual(Path(stored_path), target / relative)
+                self.assertEqual(json.loads(Path(stored_path).read_bytes())['payload']['cwd'], str(project))
 
     def test_original_error_survives_windows_cleanup(self):
         original_rows = transfer.rows

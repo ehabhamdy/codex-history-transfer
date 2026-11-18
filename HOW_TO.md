@@ -135,6 +135,10 @@ media, and output files must be copied separately where needed; see the
   project in the app once.
 - **Compressed session needs `zstd`:** make `zstd` available on the exporting
   Mac, or use Python 3.14+ with `compression.zstd`.
+- **Export fails with `can't decode byte 0xb5 in position 1`.** If you are
+  running version 1.1.1 or earlier, use version 1.1.2 and retry the same
+  command. It handles chats whose database entries point directly to a
+  compressed `.jsonl.zst` file. You can leave the session files in place.
 - **Incompatible schema:** match app versions; do not bypass the check.
 - **Duplicate chat ID:** inspect the existing chat; reimport is unsupported.
 - **Other failure:** retain the full output, both original stores, and any
@@ -154,7 +158,7 @@ remove databases or history folders to force discovery.
 If an older script stopped with `WinError 267` on `thread_history_1.sqlite`
 inside a `codex-transfer-stage-*` directory, replace it with the current script.
 Check with `py -3 transfer.py --version`; expect
-`codex-history-transfer 1.1.1` for the current release. The existing bundle can
+`codex-history-transfer 1.1.2` for the current release. The existing bundle can
 be reused because the bundle format is unchanged.
 
 Version 1.1.0 closes SQLite handles on error, prevents cleanup failures from

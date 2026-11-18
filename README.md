@@ -6,7 +6,7 @@ one-time migration utility for history stored in `.codex`. It does not export
 cloud ChatGPT conversations or copy the project's repository.
 
 The original Mac-to-Windows transfer was reported successful by the user.
-Current tool version: **1.1.1**. See [validation and known limits](VALIDATION.md)
+Current tool version: **1.1.2**. See [validation and known limits](VALIDATION.md)
 for the recorded checks and their scope.
 
 ## Requirements

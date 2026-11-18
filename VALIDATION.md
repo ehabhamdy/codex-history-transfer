@@ -9,9 +9,9 @@ to their Windows machine worked properly. Windows app/Python versions and
 detailed UI checks were not recorded. Automated checks below ran on macOS,
 including simulations of Windows file locking.
 
-## Current repository checks — 2026-11-17
+## Current repository checks — 2026-11-18
 
-After the verification fix, `python3 -m unittest -bv` passed all **eight**
+After the compressed export fix, `python3 -m unittest -bv` passed all **nine**
 regression tests using Python **3.12.13** on macOS (`-b` buffers test output).
 CLI help was checked against the documented commands. Tests use synthetic
 chats and temporary stores, without modifying production history.
@@ -31,6 +31,9 @@ The suite covers:
   imported state tables (11 mutation subcases).
 - Restoring both databases and removing newly installed files after a state
   verification failure.
+- Exporting and importing a compressed session with either recorded filename
+  (`.jsonl` or `.jsonl.zst`). The test checks the decompressed bytes in the ZIP
+  and the installed chat's session path and working directory.
 
 Run with `python3 -m unittest -v` on macOS or `py -3 -m unittest -v` on
 Windows. The locking simulation does not replace a native Windows test run.

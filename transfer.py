@@ -23,7 +23,7 @@ import uuid
 import zipfile
 
 VERSION = 1
-TOOL_VERSION = '1.1.1'
+TOOL_VERSION = '1.1.2'
 STATE = 'state_5.sqlite'
 HISTORY = 'thread_history_1.sqlite'
 STATE_TABLES = ['threads', 'thread_dynamic_tools', 'thread_attachments', 'thread_spawn_edges']
@@ -162,10 +162,14 @@ def staging_directory(parent):
             print(f'NOTE: Temporary files remain at {stage}: {exc}', file=sys.stderr)
 
 def rollout_bytes(path):
-    if path.exists():
+    if path.suffix == '.zst':
+        compressed = path
+        require(compressed.is_file(), f'Session payload missing: {compressed}')
+    elif path.is_file():
         return path.read_bytes()
-    compressed = Path(str(path) + '.zst')
-    require(compressed.exists(), f'Session payload missing: {path} (also checked .zst).')
+    else:
+        compressed = Path(str(path) + '.zst')
+        require(compressed.is_file(), f'Session payload missing: {path} (also checked .zst).')
     try:
         from compression import zstd
         return zstd.decompress(compressed.read_bytes())
@@ -215,8 +219,12 @@ def _make_export(home, project, output, state, history):
         with zipfile.ZipFile(temp_output, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
             for row in selected:
                 p = Path(row['rollout_path'])
-                relative = p.relative_to(home).as_posix()
+                # Bundle members contain decompressed JSONL even when the database
+                # records the compressed filename directly.
+                session_path = p.with_suffix('') if p.suffix == '.zst' else p
+                relative = session_path.relative_to(home).as_posix()
                 require(relative.startswith(('sessions/', 'archived_sessions/')), 'Unexpected rollout location: ' + relative)
+                require(relative not in payload['files'], 'Duplicate session path in export: ' + relative)
                 data = rollout_bytes(p)
                 header = json.loads(data.split(b'\n', 1)[0]).get('payload', {})
                 for key in ('forked_from_id', 'forked_from', 'parent_thread_id'):
